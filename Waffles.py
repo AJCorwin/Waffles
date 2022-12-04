@@ -1,8 +1,7 @@
 from discord.ext import commands, tasks
 import discord
-import secrets
+import my_secrets
 import sqlite3
-import asyncio
 import random
 
 print(f'bot api version is {discord.__version__}')
@@ -23,7 +22,14 @@ member.name for discord username
 member.display_name for nickname
 '''
 
-waffles_db = secrets.database_name
+letter_values = {"a": 1, "c": 3, "b": 3, "e": 1, "d": 2, "g": 2, 
+          "f": 4, "i": 1, "h": 4, "k": 5, "j": 8, "m": 3, 
+          "l": 1, "o": 1, "n": 1, "q": 10, "p": 3, "s": 1, 
+          "r": 1, "u": 1, "t": 1, "w": 4, "v": 4, "y": 4, 
+          "x": 8, "z": 10}
+
+
+waffles_db = my_secrets.database_name
 
 con = sqlite3.connect(waffles_db)
 con.execute("PRAGMA foreign_keys = 1")
@@ -35,7 +41,6 @@ intents.members = True
 intents.presences = True
 activity=discord.Game(name='Hello There')
 
-#bot = discord.Client(intents=intents, activity=discord.Game(name='Hello There'))
 bot = commands.Bot(command_prefix='!', intents=intents, activity=activity)
 
 @bot.event
@@ -85,59 +90,100 @@ async def hello(ctx):
 
 @bot.command()
 async def opt_in(ctx, opt_message: str):
+   await opt_in(ctx, opt_message)
+
+
+async def opt_in(ctx, message: str):
     try:
-        if opt_message != "me":
+        if message != "me":
             await ctx.send(f"HEY! {ctx.author.mention} Usage: !opt_in me")
         else:
-            cursor.execute(f'SELECT * FROM "discord_users" WHERE discord_user_id={ctx.author.id}')
-            user_in_main_table = cursor.fetchone()
-            if user_in_main_table is None:
-                insert_discord_users(con, 'discord_users', {'discord_user_id': ctx.author.id,
-                        'user_name': ctx.author.name,
-                        'average_score': 0,
-                        'max_score': 0,
-                        'min_score': 0,
-                        'latest_score': 0,
-                        'standard_deviation': 0,
-                        'range': 0,
-                        'interquartile_range': 0,
-                        'largest_outlier': 0,
-                        'smallest_outlier': 0})     
-            ctx.command = bot.get_command("add_to_nicknames_table")
-            await bot.invoke(ctx)  # invoke the command above
+            try:
+                display_name = ctx.author.name
+                whitelist = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
+                cleaned_display_name = ''.join(filter(whitelist.__contains__, display_name))
+                latest_score = 0
+                await (username_score(ctx, message))
+                discord_user_values = [ctx.author.id, cleaned_display_name, 0, 0, 0, latest_score, 0, 0, 0, 0, 0]
+                sql = ''' INSERT INTO discord_users(discord_user_id, user_name, average_score, max_score, min_score, 
+                latest_score, standard_deviation, range, interquartile_range, largest_outlier, smallest_outlier)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '''
+                cursor.execute(sql, discord_user_values)
+                con.commit()
+                await ctx.send(f"Hey {ctx.author.mention}! You have been added to the DB.")
+            except:
+                await ctx.send(f"Hey {ctx.author.mention} is already in the database. You're silly {ctx.author.mention}!")
     except Exception:
-        await clear_error()
-        print(opt_message)
-        await ctx.send(f"HEY! {ctx.author.mention} Usage: !opt_in me")
-        return
+            print("internal DB error opt in def")
 
-@opt_in.error
-async def clear_error(ctx, error):
-    if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"HEY! {ctx.author.mention} Usage: !opt_in me")
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send('** are you lost?**')
-
+async def username_score(ctx, opt_message: str):
+    latest_score = 0
+    await(score_me(ctx, opt_message))
+    return latest_score
 
 @bot.command()
-async def add_to_nicknames_table(ctx):
-    print("send to add_to_nickname_table worked")
-    await ctx.send(ctx.author.id, ctx.member.display_name, 4)
-
-    cursor.execute(f'SELECT * FROM "discord_users" WHERE discord_user_id={ctx.author.id}')
-    print("execute was successful")
-    nickname_in_scores_table = cursor.fetchone()
-    if nickname_in_scores_table is None:
-        insert_nickanme_scores(con, 'nickname_scores', {'discord_user_id': {ctx.author.id}, 'FOREIGN KEY discord_users REFERENCES': ctx.author.id,
-                        'nickname': ctx.display_name, 'score': 4})
-
-        await ctx.send(f'Success + {ctx.author.mention}!')
+async def username_score(ctx, opt_message):
+    latest_score = 0
+    latest_score = await score_me(ctx, opt_message)
+    if latest_score == 0:
+        print("no score returned")
+    elif latest_score is None:
+        await ctx.send(f"Hey {ctx.author.mention} you have already tried that username, it is worth {latest_score}")
     else:
-        clear_error()
-        await ctx.send(f"HEY! {ctx.author.mention} Usage: !opt_in me")
-        return
+        await ctx.send(f"Hey {ctx.author.mention}! Your display name is worth {latest_score}")
 
-
+async def score_me(ctx, message: str):
+        latest_score = 0
+        print(ctx.author.display_name)
+        if ctx.author.display_name is None:
+            display_name = ctx.author.name
+        else:
+            display_name = ctx.author.display_name
+        display_name = display_name.lower()
+        user_id = ctx.author.id
+        whitelist = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
+        cleaned_display_name = ''.join(filter(whitelist.__contains__, display_name))
+        try:
+            sql_check = f''' SELECT score
+                            FROM nickname_scores
+                            WHERE discord_user_id=? 
+                            AND nickname=?
+        '''
+            display_name_check = cursor.execute(sql_check, (user_id, display_name ))
+            display_name_check = cursor.fetchone()[0]
+            con.commit()
+            print(display_name_check)
+            return display_name_check
+        except:
+            try:
+                if message != "me":
+                    await ctx.send(f"HEY! {ctx.author.mention} Usage: !username_score me")
+                else:
+                    try:
+                        cleaned_display_name = "".join(set(cleaned_display_name))
+                        cleaned_display_name = ''.join(sorted(cleaned_display_name))
+                        for letter in cleaned_display_name:
+                            latest_score += letter_values[letter]
+                            print(latest_score)
+                        latest_score = latest_score
+                        discord_scores_values = [ctx.author.id, display_name, latest_score]
+                        sql_nickname_score_add = ''' 
+                        INSERT OR REPLACE INTO nickname_scores(discord_user_id, nickname, score)
+                        VALUES(?, ?, ?)
+                        '''
+                        cursor.execute(sql_nickname_score_add, discord_scores_values)
+                        con.commit()
+                        discord_user_update = '''UPDATE discord_users
+                        SET latest_score=?
+                        WHERE discord_user_id=?'''
+                        cursor.execute(discord_user_update, (latest_score, ctx.author.id))
+                        con.commit()
+                        return latest_score
+                        
+                    except:
+                        await ctx.send(f"Hey {ctx.author.mention} you shouldnt be here score_me")
+            except Exception:
+                    print("internal DB error score me def")
 
 @bot.event    
 async def on_member_update(before, after):
@@ -181,4 +227,4 @@ def insert_nickanme_scores(con, table, row):
     con.cursor().execute(sql, row)
     con.commit()
 
-bot.run(secrets.mytoken)
+bot.run(my_secrets.mytoken)
